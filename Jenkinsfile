@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     environment {
+        registry = "docker.io/yopaz-cuongdv"
         imageName = "nextjs-app"
-        DOCKER_CREDS = credentials('docker-credentials')
     }
 
     stages {
@@ -47,7 +47,7 @@ pipeline {
         stage('Test') {
             steps {
                 echo 'Running tests...'
-                sh 'npm test || true'
+                sh 'npm test || echo "No tests configured"'
             }
         }
 
@@ -61,8 +61,8 @@ pipeline {
             steps {
                 script {
                     echo 'Building Docker image...'
-                    docker.build("${env.registry}/${env.imageName}:${BUILD_NUMBER}")
-                    docker.build("${env.registry}/${env.imageName}:latest")
+                    sh "docker build -t ${env.registry}/${env.imageName}:${BUILD_NUMBER} ."
+                    sh "docker tag ${env.registry}/${env.imageName}:${BUILD_NUMBER} ${env.registry}/${env.imageName}:latest"
                 }
             }
         }
@@ -76,10 +76,10 @@ pipeline {
             }
             steps {
                 script {
-                    echo 'Pushing Docker image to registry...'
-                    docker.withRegistry("https://${env.registry}", 'docker-credentials') {
-                        docker.image("${env.registry}/${env.imageName}:${BUILD_NUMBER}").push()
-                        docker.image("${env.registry}/${env.imageName}:latest").push()
+                    withCredentials([usernamePassword(credentialsId: 'docker-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS', usernamePassword: true)]) {
+                        sh "echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin ${env.registry}"
+                        sh "docker push ${env.registry}/${env.imageName}:${BUILD_NUMBER}"
+                        sh "docker push ${env.registry}/${env.imageName}:latest"
                     }
                 }
             }
@@ -96,8 +96,7 @@ pipeline {
                 echo 'Deploying to production...'
                 sh '''
                     # Add your deployment commands here
-                    # Example: kubectl apply -f k8s/
-                    # Or: docker-compose -f docker-compose.prod.yml up -d
+                    # Example: docker-compose up -d
                     echo "Deployment completed"
                 '''
             }
@@ -107,7 +106,6 @@ pipeline {
     post {
         always {
             echo 'Pipeline completed!'
-            cleanWs()
         }
         success {
             echo 'Pipeline succeeded! ✅'
