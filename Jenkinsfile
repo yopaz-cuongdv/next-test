@@ -1,12 +1,7 @@
 pipeline {
     agent any
 
-    tools {
-        nodejs 'NodeJS 20'
-    }
-
     environment {
-        registry = "docker.io/yopaz-cuongdv"
         imageName = "nextjs-app"
         DOCKER_CREDS = credentials('docker-credentials')
     }
