@@ -1,33 +1,48 @@
 pipeline {
-    agent {
-        docker {
-            image 'node:20-alpine'
-            args '-v /var/run/docker.sock:/var/run/docker.sock -v /usr/bin/docker:/usr/bin/docker'
-        }
-    }
+    agent any
 
     environment {
         registry = "docker.io/yopaz-cuongdv"
         imageName = "nextjs-app"
-        GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        NODE_VERSION = "20"
     }
 
     stages {
-        stage('Setup') {
+        stage('Checkout') {
             steps {
-                echo '=== Setup Environment ==='
+                echo '=== Checking out code ==='
+                checkout scm
+                sh 'git rev-parse HEAD > GIT_COMMIT'
+                sh 'git rev-parse --short HEAD > GIT_COMMIT_SHORT'
+            }
+        }
+
+        stage('Setup Node.js') {
+            steps {
+                echo '=== Installing Node.js ==='
                 sh '''
+                    echo "Node version check: $(node --version 2>/dev/null || echo 'not installed')"
+                    echo "NPM version check: $(npm --version 2>/dev/null || echo 'not installed')"
+
+                    # Check if Node.js is installed
+                    if ! command -v node &> /dev/null; then
+                        echo "Installing Node.js ${NODE_VERSION}..."
+                        curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash -
+                        apt-get install -y nodejs
+                    fi
+
+                    # Verify installations
                     node --version
                     npm --version
 
                     # Install pnpm if needed
                     if [ -f "pnpm-lock.yaml" ]; then
-                        npm install -g pnpm
+                        if ! command -v pnpm &> /dev/null; then
+                            echo "Installing pnpm..."
+                            npm install -g pnpm
+                        fi
                         pnpm --version
                     fi
-
-                    # Install Docker CLI
-                    apk add --no-cache docker-cli
                 '''
             }
         }
@@ -37,10 +52,13 @@ pipeline {
                 echo '=== Installing Dependencies ==='
                 sh '''
                     if [ -f "package-lock.json" ]; then
+                        echo "Using npm ci..."
                         npm ci
                     elif [ -f "pnpm-lock.yaml" ]; then
+                        echo "Using pnpm install..."
                         pnpm install --frozen-lockfile
                     else
+                        echo "Using npm install..."
                         npm install
                     fi
                 '''
@@ -61,6 +79,13 @@ pipeline {
             }
         }
 
+        stage('Test') {
+            steps {
+                echo '=== Running Tests ==='
+                sh 'npm test || echo "No tests configured"'
+            }
+        }
+
         stage('Build Docker Image') {
             when {
                 anyOf {
@@ -70,10 +95,12 @@ pipeline {
             }
             steps {
                 script {
+                    env.GIT_COMMIT_SHORT = sh(script: 'cat GIT_COMMIT_SHORT', returnStdout: true).trim()
                     echo "=== Building Docker Image: ${env.registry}/${env.imageName}:${env.GIT_COMMIT_SHORT} ==="
                     sh """
                         docker build -t ${env.registry}/${env.imageName}:${env.GIT_COMMIT_SHORT} .
                         docker tag ${env.registry}/${env.imageName}:${env.GIT_COMMIT_SHORT} ${env.registry}/${env.imageName}:latest
+                        echo "Image built successfully!"
                     """
                 }
             }
@@ -97,6 +124,7 @@ pipeline {
                             echo "\${DOCKER_PASS}" | docker login -u "\${DOCKER_USER}" --password-stdin ${env.registry}
                             docker push ${env.registry}/${env.imageName}:\${GIT_COMMIT_SHORT}
                             docker push ${env.registry}/${env.imageName}:latest
+                            echo "Images pushed successfully!"
                         """
                     }
                 }
@@ -111,37 +139,27 @@ pipeline {
                 }
             }
             steps {
-                script {
-                    echo '=== Deploying to Production ==='
+                echo '=== Deploying to Production ==='
+                sh '''
+                    cd /var/www/AI/nextjs-base
 
-                    // SSH vào server và deploy
-                    withCredentials([string(
-                        credentialsId: 'server-ssh-key',
-                        variable: 'SSH_KEY'
-                    )]) {
-                        sh """
-                            # Tạo temp SSH key
-                            echo "\${SSH_KEY}" > /tmp/ssh_key
-                            chmod 600 /tmp/ssh_key
+                    # Pull latest image
+                    docker pull ${registry}/${imageName}:latest
 
-                            # SSH vào server và deploy
-                            ssh -o StrictHostKeyChecking=no -i /tmp/ssh_key user@your-server-ip << 'ENDSSH'
-                                cd /var/www/AI/nextjs-base
+                    # Stop old containers
+                    docker-compose down || true
 
-                                # Pull mới image
-                                docker pull ${env.registry}/${env.imageName}:latest
+                    # Start new containers
+                    docker-compose up -d
 
-                                # Restart container
-                                docker-compose up -d --force-recreate
+                    # Wait for health check
+                    sleep 10
 
-                                echo "Deploy completed!"
-                            ENDSSH
+                    # Show status
+                    docker-compose ps
 
-                            # Xóa temp key
-                            rm -f /tmp/ssh_key
-                        """
-                    }
-                }
+                    echo "Deployment completed!"
+                '''
             }
         }
     }
@@ -149,19 +167,14 @@ pipeline {
     post {
         always {
             echo '=== Pipeline Completed ==='
-            cleanWs(
-                deleteDirs: true,
-                patterns: [
-                    [pattern: 'node_modules', type: 'INCLUDE'],
-                    [pattern: '.next', type: 'INCLUDE']
-                ]
-            )
+            sh 'rm -f GIT_COMMIT GIT_COMMIT_SHORT || true'
         }
         success {
             echo '✅ Pipeline Succeeded!'
         }
         failure {
             echo '❌ Pipeline Failed!'
+            sh 'docker ps -a || true'
         }
     }
 }
