@@ -4,6 +4,7 @@ pipeline {
     environment {
         registry = "docker.io/yopaz-cuongdv"
         imageName = "nextjs-app"
+        NODE_VERSION = "20"
     }
 
     stages {
@@ -14,6 +15,26 @@ pipeline {
             }
         }
 
+        stage('Setup Node.js') {
+            steps {
+                echo 'Installing Node.js and npm...'
+                sh '''
+                    # Install Node.js 20 using NodeSource
+                    if ! command -v node &> /dev/null; then
+                        curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash -
+                        apt-get install -y nodejs
+                    fi
+                    node --version
+                    npm --version
+
+                    # Install pnpm globally if needed
+                    if [ -f "pnpm-lock.yaml" ] && ! command -v pnpm &> /dev/null; then
+                        npm install -g pnpm
+                    fi
+                '''
+            }
+        }
+
         stage('Install Dependencies') {
             steps {
                 echo 'Installing dependencies...'
@@ -21,7 +42,6 @@ pipeline {
                     if [ -f "package-lock.json" ]; then
                         npm ci
                     elif [ -f "pnpm-lock.yaml" ]; then
-                        npm install -g pnpm
                         pnpm install --frozen-lockfile
                     else
                         npm install
