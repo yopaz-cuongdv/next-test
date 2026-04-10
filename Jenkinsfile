@@ -7,6 +7,10 @@ pipeline {
         NODE_VERSION = "20"
     }
 
+    options {
+        skipDefaultCheckout true
+    }
+
     stages {
         stage('Checkout') {
             steps {
