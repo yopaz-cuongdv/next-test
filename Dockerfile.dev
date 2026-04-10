@@ -1,0 +1,18 @@
+# Dockerfile cho Development với hot reload
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY package.json package-lock.json pnpm-lock.yaml* ./
+
+RUN npm install -g pnpm && \
+    pnpm install || \
+    npm install
+
+# Copy source
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npm", "run", "dev"]

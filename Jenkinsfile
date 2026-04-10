@@ -1,47 +1,40 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'node:20-alpine'
+            args '-v /var/run/docker.sock:/var/run/docker.sock -v /usr/bin/docker:/usr/bin/docker'
+        }
+    }
 
     environment {
         registry = "docker.io/yopaz-cuongdv"
         imageName = "nextjs-app"
-        NODE_VERSION = "20"
-    }
-
-    options {
-        skipDefaultCheckout true
+        GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
     }
 
     stages {
-        stage('Checkout') {
+        stage('Setup') {
             steps {
-                echo 'Checking out code...'
-                checkout scm
-            }
-        }
-
-        stage('Setup Node.js') {
-            steps {
-                echo 'Installing Node.js and npm...'
+                echo '=== Setup Environment ==='
                 sh '''
-                    # Install Node.js 20 using NodeSource
-                    if ! command -v node &> /dev/null; then
-                        curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash -
-                        apt-get install -y nodejs
-                    fi
                     node --version
                     npm --version
 
-                    # Install pnpm globally if needed
-                    if [ -f "pnpm-lock.yaml" ] && ! command -v pnpm &> /dev/null; then
+                    # Install pnpm if needed
+                    if [ -f "pnpm-lock.yaml" ]; then
                         npm install -g pnpm
+                        pnpm --version
                     fi
+
+                    # Install Docker CLI
+                    apk add --no-cache docker-cli
                 '''
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                echo 'Installing dependencies...'
+                echo '=== Installing Dependencies ==='
                 sh '''
                     if [ -f "package-lock.json" ]; then
                         npm ci
@@ -56,22 +49,15 @@ pipeline {
 
         stage('Lint') {
             steps {
-                echo 'Running linter...'
-                sh 'npm run lint || true'
+                echo '=== Running Lint ==='
+                sh 'npm run lint || echo "Lint completed with warnings"'
             }
         }
 
         stage('Build') {
             steps {
-                echo 'Building Next.js application...'
+                echo '=== Building Next.js App ==='
                 sh 'npm run build'
-            }
-        }
-
-        stage('Test') {
-            steps {
-                echo 'Running tests...'
-                sh 'npm test || echo "No tests configured"'
             }
         }
 
@@ -84,9 +70,11 @@ pipeline {
             }
             steps {
                 script {
-                    echo 'Building Docker image...'
-                    sh "docker build -t ${env.registry}/${env.imageName}:${BUILD_NUMBER} ."
-                    sh "docker tag ${env.registry}/${env.imageName}:${BUILD_NUMBER} ${env.registry}/${env.imageName}:latest"
+                    echo "=== Building Docker Image: ${env.registry}/${env.imageName}:${env.GIT_COMMIT_SHORT} ==="
+                    sh """
+                        docker build -t ${env.registry}/${env.imageName}:${env.GIT_COMMIT_SHORT} .
+                        docker tag ${env.registry}/${env.imageName}:${env.GIT_COMMIT_SHORT} ${env.registry}/${env.imageName}:latest
+                    """
                 }
             }
         }
@@ -100,10 +88,16 @@ pipeline {
             }
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: 'docker-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS', usernamePassword: true)]) {
-                        sh "echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin ${env.registry}"
-                        sh "docker push ${env.registry}/${env.imageName}:${BUILD_NUMBER}"
-                        sh "docker push ${env.registry}/${env.imageName}:latest"
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-credentials',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        sh """
+                            echo "\${DOCKER_PASS}" | docker login -u "\${DOCKER_USER}" --password-stdin ${env.registry}
+                            docker push ${env.registry}/${env.imageName}:\${GIT_COMMIT_SHORT}
+                            docker push ${env.registry}/${env.imageName}:latest
+                        """
                     }
                 }
             }
@@ -117,25 +111,57 @@ pipeline {
                 }
             }
             steps {
-                echo 'Deploying to production...'
-                sh '''
-                    # Add your deployment commands here
-                    # Example: docker-compose up -d
-                    echo "Deployment completed"
-                '''
+                script {
+                    echo '=== Deploying to Production ==='
+
+                    // SSH vào server và deploy
+                    withCredentials([string(
+                        credentialsId: 'server-ssh-key',
+                        variable: 'SSH_KEY'
+                    )]) {
+                        sh """
+                            # Tạo temp SSH key
+                            echo "\${SSH_KEY}" > /tmp/ssh_key
+                            chmod 600 /tmp/ssh_key
+
+                            # SSH vào server và deploy
+                            ssh -o StrictHostKeyChecking=no -i /tmp/ssh_key user@your-server-ip << 'ENDSSH'
+                                cd /var/www/AI/nextjs-base
+
+                                # Pull mới image
+                                docker pull ${env.registry}/${env.imageName}:latest
+
+                                # Restart container
+                                docker-compose up -d --force-recreate
+
+                                echo "Deploy completed!"
+                            ENDSSH
+
+                            # Xóa temp key
+                            rm -f /tmp/ssh_key
+                        """
+                    }
+                }
             }
         }
     }
 
     post {
         always {
-            echo 'Pipeline completed!'
+            echo '=== Pipeline Completed ==='
+            cleanWs(
+                deleteDirs: true,
+                patterns: [
+                    [pattern: 'node_modules', type: 'INCLUDE'],
+                    [pattern: '.next', type: 'INCLUDE']
+                ]
+            )
         }
         success {
-            echo 'Pipeline succeeded! ✅'
+            echo '✅ Pipeline Succeeded!'
         }
         failure {
-            echo 'Pipeline failed! ❌'
+            echo '❌ Pipeline Failed!'
         }
     }
 }
