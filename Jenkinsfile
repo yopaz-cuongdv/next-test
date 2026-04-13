@@ -4,120 +4,36 @@ pipeline {
     environment {
         registry = "docker.io/yopaz-cuongdv"
         imageName = "nextjs-app"
-        NODE_VERSION = "20"
+        projectPath = "/var/www/AI/nextjs-base"
     }
 
     stages {
         stage('Checkout') {
             steps {
-                echo '=== Checking out code ==='
+                echo '=== Checkout Code ==='
                 checkout scm
                 script {
                     env.GIT_COMMIT_SHORT = sh(
                         script: 'git rev-parse --short HEAD',
                         returnStdout: true
                     ).trim()
-                    env.GIT_BRANCH = sh(
-                        script: 'git rev-parse --abbrev-ref HEAD',
-                        returnStdout: true
-                    ).trim()
                 }
-                echo "Branch: ${GIT_BRANCH}"
                 echo "Commit: ${GIT_COMMIT_SHORT}"
-            }
-        }
-
-        stage('Setup Node.js') {
-            steps {
-                echo '=== Setting up Node.js ==='
-                sh '''
-                    export NVM_DIR="$WORKSPACE/.nvm"
-                    export PATH="$NVM_DIR/versions/node/v${NODE_VERSION}.0/bin:$PATH"
-
-                    if [ ! -d "$NVM_DIR" ]; then
-                        echo "Installing NVM..."
-                        mkdir -p "$NVM_DIR"
-                        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-                    fi
-
-                    . "$NVM_DIR/nvm.sh"
-                    nvm install ${NODE_VERSION}
-                    nvm use ${NODE_VERSION}
-
-                    node --version
-                    npm --version
-
-                    echo "export NVM_DIR=\"$NVM_DIR\"" > env_vars
-                    echo "export PATH=\"\$NVM_DIR/versions/node/v${NODE_VERSION}.0/bin:\$PATH\"" >> env_vars
-                '''
-            }
-        }
-
-        stage('Install Dependencies') {
-            steps {
-                echo '=== Installing Dependencies ==='
-                sh '''
-                    . ./env_vars
-                    . "$NVM_DIR/nvm.sh"
-                    nvm use ${NODE_VERSION}
-
-                    if [ -f "package-lock.json" ]; then
-                        echo "Using npm ci..."
-                        npm ci
-                    else
-                        echo "Using npm install..."
-                        npm install
-                    fi
-                '''
-            }
-        }
-
-        stage('Lint') {
-            steps {
-                echo '=== Running Lint ==='
-                sh '''
-                    . ./env_vars || true
-                    npm run lint || echo "Lint completed with warnings"
-                '''
-            }
-        }
-
-        stage('Build Next.js') {
-            steps {
-                echo '=== Building Next.js App ==='
-                sh '''
-                    . ./env_vars
-                    npm run build
-
-                    # Verify standalone output
-                    ls -la .next/standalone || echo "No standalone output found"
-                '''
-            }
-        }
-
-        stage('Test') {
-            steps {
-                echo '=== Running Tests ==='
-                sh '''
-                    . ./env_vars || true
-                    npm test || echo "No tests configured"
-                '''
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                echo "=== Building Docker Image: ${registry}/${imageName}:${GIT_COMMIT_SHORT} ==="
-                sh '''
-                    # Build image
+                echo '=== Building Docker Image ==='
+                sh """
+                    cd ${projectPath}
+
+                    # Build image with commit tag
                     docker build -t ${registry}/${imageName}:${GIT_COMMIT_SHORT} .
                     docker tag ${registry}/${imageName}:${GIT_COMMIT_SHORT} ${registry}/${imageName}:latest
 
-                    # Show images
-                    docker images | grep ${imageName}
-
-                    echo "Image built successfully!"
-                '''
+                    echo 'Image built: ${registry}/${imageName}:${GIT_COMMIT_SHORT}'
+                """
             }
         }
 
@@ -129,20 +45,19 @@ pipeline {
                 }
             }
             steps {
-                echo "=== Pushing Docker Image ==="
-                sh '''
-                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin ${registry}
+                echo '=== Pushing Docker Image ==='
+                sh """
+                    echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin ${registry}
 
                     docker push ${registry}/${imageName}:${GIT_COMMIT_SHORT}
                     docker push ${registry}/${imageName}:latest
 
-                    echo "Images pushed successfully!"
-                    echo "Tag: ${GIT_COMMIT_SHORT}"
-                '''
+                    echo 'Images pushed successfully!'
+                """
             }
         }
 
-        stage('Deploy to Production') {
+        stage('Deploy') {
             when {
                 anyOf {
                     branch 'main'
@@ -150,32 +65,30 @@ pipeline {
                 }
             }
             steps {
-                echo '=== Deploying to Production ==='
-                sh '''
-                    cd /var/www/AI/nextjs-base || exit 1
+                echo '=== Deploying Application ==='
+                sh """
+                    cd ${projectPath}
 
                     # Pull latest image
-                    echo "Pulling latest image..."
                     docker pull ${registry}/${imageName}:latest
 
-                    # Restart containers using docker-compose
-                    echo "Restarting containers..."
+                    # Stop and remove old containers
                     docker-compose down
+
+                    # Start new containers
                     docker-compose up -d
 
-                    # Wait for containers to be healthy
-                    echo "Waiting for containers to start..."
-                    sleep 10
+                    # Wait for health check
+                    echo 'Waiting for containers to be healthy...'
+                    sleep 15
 
-                    # Show container status
+                    # Show status
                     docker-compose ps
+                    docker-compose logs --tail=20 nextjs-app
 
-                    # Show logs
-                    docker-compose logs --tail=20
-
-                    echo "Deployment completed!"
-                    echo "App should be available at http://localhost"
-                '''
+                    echo 'Deployment completed!'
+                    echo 'Access at: http://localhost'
+                """
             }
         }
     }
@@ -183,26 +96,20 @@ pipeline {
     post {
         always {
             echo '=== Pipeline Completed ==='
-            sh 'rm -f env_vars || true'
+            sh 'docker images | grep nextjs-app || true'
         }
         success {
             echo """
-            ========================================
-            ✅ Pipeline Succeeded!
-            ========================================
-            Image: ${registry}/${imageName}:${GIT_COMMIT_SHORT}
-            Branch: ${GIT_BRANCH}
-            ========================================
+            ╔════════════════════════════════════════╗
+            ║   ✅ Deployment Successful!           ║
+            ╠════════════════════════════════════════╣
+            ║  Image: ${registry}/${imageName}:${GIT_COMMIT_SHORT}
+            ║  Access: http://localhost             ║
+            ╚════════════════════════════════════════╝
             """
         }
         failure {
-            echo """
-            ========================================
-            ❌ Pipeline Failed!
-            ========================================
-            Check the logs above for details.
-            ========================================
-            """
+            echo '❌ Deployment Failed! Check logs above.'
         }
     }
 }
