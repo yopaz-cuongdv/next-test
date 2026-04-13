@@ -32,7 +32,7 @@ pipeline {
                     fi
 
                     # Load NVM
-                    [ -s "$NVM_DIR/nvm.sh" ] && \\source "$NVM_DIR/nvm.sh"
+                    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
                     # Install Node.js
                     echo "Installing Node.js ${NODE_VERSION}..."
@@ -60,8 +60,8 @@ pipeline {
             steps {
                 echo '=== Installing Dependencies ==='
                 sh '''
-                    source env_vars
-                    [ -s "$NVM_DIR/nvm.sh" ] && \\source "$NVM_DIR/nvm.sh"
+                    . ./env_vars
+                    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
                     nvm use ${NODE_VERSION}
 
                     if [ -f "package-lock.json" ]; then
@@ -82,7 +82,7 @@ pipeline {
             steps {
                 echo '=== Running Lint ==='
                 sh '''
-                    source env_vars || true
+                    . ./env_vars || true
                     npm run lint || echo "Lint completed with warnings"
                 '''
             }
@@ -92,7 +92,7 @@ pipeline {
             steps {
                 echo '=== Building Next.js App ==='
                 sh '''
-                    source env_vars || true
+                    . ./env_vars || true
                     npm run build
                 '''
             }
@@ -102,7 +102,7 @@ pipeline {
             steps {
                 echo '=== Running Tests ==='
                 sh '''
-                    source env_vars || true
+                    . ./env_vars || true
                     npm test || echo "No tests configured"
                 '''
             }
