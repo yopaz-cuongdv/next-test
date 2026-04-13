@@ -27,6 +27,7 @@ pipeline {
                     # Install NVM if not exists
                     if [ ! -d "$NVM_DIR" ]; then
                         echo "Installing NVM..."
+                        mkdir -p "$NVM_DIR"
                         curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
                     fi
 
