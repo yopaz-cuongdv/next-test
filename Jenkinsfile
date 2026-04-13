@@ -5,7 +5,6 @@ pipeline {
         registry = "docker.io/yopaz-cuongdv"
         imageName = "nextjs-app"
         NODE_VERSION = "20"
-        NVM_DIR = "${WORKSPACE}/.nvm"
     }
 
     stages {
@@ -13,43 +12,41 @@ pipeline {
             steps {
                 echo '=== Checking out code ==='
                 checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                    env.GIT_BRANCH = sh(
+                        script: 'git rev-parse --abbrev-ref HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+                echo "Branch: ${GIT_BRANCH}"
+                echo "Commit: ${GIT_COMMIT_SHORT}"
             }
         }
 
-        stage('Setup Node.js via NVM') {
+        stage('Setup Node.js') {
             steps {
-                echo '=== Installing Node.js (no sudo needed) ==='
+                echo '=== Setting up Node.js ==='
                 sh '''
-                    # Export NVM paths
                     export NVM_DIR="$WORKSPACE/.nvm"
                     export PATH="$NVM_DIR/versions/node/v${NODE_VERSION}.0/bin:$PATH"
 
-                    # Install NVM if not exists
                     if [ ! -d "$NVM_DIR" ]; then
                         echo "Installing NVM..."
                         mkdir -p "$NVM_DIR"
                         curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
                     fi
 
-                    # Load NVM
-                    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-
-                    # Install Node.js
-                    echo "Installing Node.js ${NODE_VERSION}..."
+                    . "$NVM_DIR/nvm.sh"
                     nvm install ${NODE_VERSION}
                     nvm use ${NODE_VERSION}
 
-                    # Verify
                     node --version
                     npm --version
 
-                    # Install pnpm if needed
-                    if [ -f "pnpm-lock.yaml" ]; then
-                        npm install -g pnpm
-                        pnpm --version
-                    fi
-
-                    # Save paths for next stages
                     echo "export NVM_DIR=\"$NVM_DIR\"" > env_vars
                     echo "export PATH=\"\$NVM_DIR/versions/node/v${NODE_VERSION}.0/bin:\$PATH\"" >> env_vars
                 '''
@@ -61,15 +58,12 @@ pipeline {
                 echo '=== Installing Dependencies ==='
                 sh '''
                     . ./env_vars
-                    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+                    . "$NVM_DIR/nvm.sh"
                     nvm use ${NODE_VERSION}
 
                     if [ -f "package-lock.json" ]; then
                         echo "Using npm ci..."
                         npm ci
-                    elif [ -f "pnpm-lock.yaml" ]; then
-                        echo "Using pnpm install..."
-                        pnpm install --frozen-lockfile
                     else
                         echo "Using npm install..."
                         npm install
@@ -88,12 +82,15 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        stage('Build Next.js') {
             steps {
                 echo '=== Building Next.js App ==='
                 sh '''
-                    . ./env_vars || true
+                    . ./env_vars
                     npm run build
+
+                    # Verify standalone output
+                    ls -la .next/standalone || echo "No standalone output found"
                 '''
             }
         }
@@ -109,35 +106,17 @@ pipeline {
         }
 
         stage('Build Docker Image') {
-            when {
-                anyOf {
-                    branch 'main'
-                    branch 'master'
-                }
-            }
             steps {
-                script {
-                    env.GIT_COMMIT_SHORT = sh(
-                        script: 'git rev-parse --short HEAD',
-                        returnStdout: true
-                    ).trim()
-                }
-                echo "=== Building Docker Image ==="
+                echo "=== Building Docker Image: ${registry}/${imageName}:${GIT_COMMIT_SHORT} ==="
                 sh '''
-                    # Use full path to docker
-                    DOCKER_PATH=/usr/bin/docker
-                    if [ ! -f "$DOCKER_PATH" ]; then
-                        DOCKER_PATH=$(which docker 2>/dev/null || echo "/usr/local/bin/docker")
-                    fi
-
-                    echo "Using docker at: $DOCKER_PATH"
-                    $DOCKER_PATH --version || echo "Docker not found"
-
                     # Build image
-                    $DOCKER_PATH build -t ${registry}/${imageName}:${GIT_COMMIT_SHORT} .
-                    $DOCKER_PATH tag ${registry}/${imageName}:${GIT_COMMIT_SHORT} ${registry}/${imageName}:latest
+                    docker build -t ${registry}/${imageName}:${GIT_COMMIT_SHORT} .
+                    docker tag ${registry}/${imageName}:${GIT_COMMIT_SHORT} ${registry}/${imageName}:latest
 
-                    echo "Image built: ${registry}/${imageName}:${GIT_COMMIT_SHORT}"
+                    # Show images
+                    docker images | grep ${imageName}
+
+                    echo "Image built successfully!"
                 '''
             }
         }
@@ -150,22 +129,20 @@ pipeline {
                 }
             }
             steps {
-                echo '=== Pushing Docker Image ==='
+                echo "=== Pushing Docker Image ==="
                 sh '''
-                    DOCKER_PATH=/usr/bin/docker
-                    if [ ! -f "$DOCKER_PATH" ]; then
-                        DOCKER_PATH=$(which docker 2>/dev/null || echo "/usr/local/bin/docker")
-                    fi
+                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin ${registry}
 
-                    echo "$DOCKER_PASS" | $DOCKER_PATH login -u "$DOCKER_USER" --password-stdin ${registry}
-                    $DOCKER_PATH push ${registry}/${imageName}:${GIT_COMMIT_SHORT}
-                    $DOCKER_PATH push ${registry}/${imageName}:latest
+                    docker push ${registry}/${imageName}:${GIT_COMMIT_SHORT}
+                    docker push ${registry}/${imageName}:latest
+
                     echo "Images pushed successfully!"
+                    echo "Tag: ${GIT_COMMIT_SHORT}"
                 '''
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy to Production') {
             when {
                 anyOf {
                     branch 'main'
@@ -178,17 +155,26 @@ pipeline {
                     cd /var/www/AI/nextjs-base || exit 1
 
                     # Pull latest image
-                    /usr/bin/docker pull ${registry}/${imageName}:latest || docker pull ${registry}/${imageName}:latest
+                    echo "Pulling latest image..."
+                    docker pull ${registry}/${imageName}:latest
 
-                    # Restart containers
-                    /usr/bin/docker-compose down || docker-compose down || true
-                    /usr/bin/docker-compose up -d || docker-compose up -d
+                    # Restart containers using docker-compose
+                    echo "Restarting containers..."
+                    docker-compose down
+                    docker-compose up -d
 
-                    # Wait and show status
-                    sleep 5
-                    /usr/bin/docker-compose ps || docker-compose ps
+                    # Wait for containers to be healthy
+                    echo "Waiting for containers to start..."
+                    sleep 10
+
+                    # Show container status
+                    docker-compose ps
+
+                    # Show logs
+                    docker-compose logs --tail=20
 
                     echo "Deployment completed!"
+                    echo "App should be available at http://localhost"
                 '''
             }
         }
@@ -197,13 +183,26 @@ pipeline {
     post {
         always {
             echo '=== Pipeline Completed ==='
-            sh 'rm -f env_vars GIT_COMMIT GIT_COMMIT_SHORT || true'
+            sh 'rm -f env_vars || true'
         }
         success {
-            echo '✅ Pipeline Succeeded!'
+            echo """
+            ========================================
+            ✅ Pipeline Succeeded!
+            ========================================
+            Image: ${registry}/${imageName}:${GIT_COMMIT_SHORT}
+            Branch: ${GIT_BRANCH}
+            ========================================
+            """
         }
         failure {
-            echo '❌ Pipeline Failed!'
+            echo """
+            ========================================
+            ❌ Pipeline Failed!
+            ========================================
+            Check the logs above for details.
+            ========================================
+            """
         }
     }
 }
