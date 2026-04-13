@@ -2,10 +2,8 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "nextjs-prod-app"
-        CONTAINER_NAME = "nextjs-app" 
-        HOST_PORT = "3004"
-        CONTAINER_PORT = "3000"
+        COMPOSE_FILE = "docker-compose.yml"
+        SERVICE_NAME = "app"
     }
 
     stages {
@@ -15,41 +13,41 @@ pipeline {
             }
         }
 
-        stage('Build Image') {
+        stage('Build & Deploy') {
             steps {
                 script {
-                    echo "🚀 Building Production Image..."
-                    // Thử dùng docker nếu đã cài trong container
-                    sh "docker build --build-arg NODE_ENV=production -t ${IMAGE_NAME}:latest ."
-                }
-            }
-        }
+                    echo "🚀 Building & Deploying with Traefik integration..."
 
-        stage('Deploy') {
-            steps {
-                script {
-                    echo "🚢 Deploying Container..."
-                    sh "docker stop ${CONTAINER_NAME} || true"
-                    sh "docker rm ${CONTAINER_NAME} || true"
-
+                    // Dùng docker-compose để deploy (tự động gắn Traefik labels)
                     sh """
-                        docker run -d \
-                        --name ${CONTAINER_NAME} \
-                        --restart unless-stopped \
-                        -p ${HOST_PORT}:${CONTAINER_PORT} \
-                        -e NODE_ENV=production \
-                        ${IMAGE_NAME}:latest
+                        docker-compose -f ${COMPOSE_FILE} down 2>/dev/null || true
+                        docker-compose -f ${COMPOSE_FILE} up -d --build ${SERVICE_NAME}
+                        docker image prune -f
                     """
                 }
             }
         }
 
-        stage('Verify') {
+        stage('Verify Traefik Integration') {
             steps {
                 script {
-                    echo "🔍 Verifying deployment..."
-                    sleep 10 
-                    sh "docker ps | grep ${CONTAINER_NAME} || echo 'Container not found'"
+                    echo "🔍 Verifying deployment & Traefik routes..."
+
+                    // Check container running
+                    sh """
+                        sleep 5
+                        docker ps | grep nextjs-app || echo 'Container check failed'
+                    """
+
+                    // Check Traefik network
+                    sh """
+                        docker network inspect web_network | grep nextjs-app || echo 'Not in web_network'
+                    """
+
+                    // Test access via Traefik (IP: 192.168.68.228)
+                    sh """
+                        curl -f http://192.168.68.228:3004 || echo 'Traefik route may need time'
+                    """
                 }
             }
         }
@@ -57,10 +55,14 @@ pipeline {
 
     post {
         success {
-            echo "✅ DEPLOYMENT SUCCESSFUL!"
+            echo """
+            ✅ DEPLOYMENT SUCCESSFUL!
+            🌐 App: http://192.168.68.228:3004
+            🔗 Traefik: integrated with web_network
+            """
         }
         failure {
-            echo "❌ DEPLOYMENT FAILED! Check if Docker is installed inside Jenkins container."
+            echo "❌ DEPLOYMENT FAILED! Check docker-compose logs."
         }
     }
 }
