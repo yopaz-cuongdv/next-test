@@ -2,114 +2,63 @@ pipeline {
     agent any
 
     environment {
-        registry = "docker.io/yopaz-cuongdv"
-        imageName = "nextjs-app"
-        projectPath = "/var/www/AI/nextjs-base"
+        IMAGE_NAME = "nextjs-app"
+        CONTAINER_NAME = "nextjs-app"
     }
 
     stages {
         stage('Checkout') {
             steps {
-                echo '=== Checkout Code ==='
                 checkout scm
-                script {
-                    env.GIT_COMMIT_SHORT = sh(
-                        script: 'git rev-parse --short HEAD',
-                        returnStdout: true
-                    ).trim()
-                }
-                echo "Commit: ${GIT_COMMIT_SHORT}"
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build Image') {
             steps {
-                echo '=== Building Docker Image ==='
                 sh """
-                    cd ${projectPath}
-
-                    # Build image with commit tag
-                    docker build -t ${registry}/${imageName}:${GIT_COMMIT_SHORT} .
-                    docker tag ${registry}/${imageName}:${GIT_COMMIT_SHORT} ${registry}/${imageName}:latest
-
-                    echo 'Image built: ${registry}/${imageName}:${GIT_COMMIT_SHORT}'
+                    docker build -t ${IMAGE_NAME} .
                 """
             }
         }
 
-        stage('Push Docker Image') {
-            when {
-                anyOf {
-                    branch 'main'
-                    branch 'master'
-                }
-            }
+        stage('Stop Old Container') {
             steps {
-                echo '=== Pushing Docker Image ==='
                 sh """
-                    echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin ${registry}
-
-                    docker push ${registry}/${imageName}:${GIT_COMMIT_SHORT}
-                    docker push ${registry}/${imageName}:latest
-
-                    echo 'Images pushed successfully!'
+                    docker stop ${CONTAINER_NAME} || true
+                    docker rm ${CONTAINER_NAME} || true
                 """
             }
         }
 
-        stage('Deploy') {
-            when {
-                anyOf {
-                    branch 'main'
-                    branch 'master'
-                }
-            }
+        stage('Run Container') {
             steps {
-                echo '=== Deploying Application ==='
                 sh """
-                    cd ${projectPath}
+                    docker run -d \
+                        --name ${CONTAINER_NAME} \
+                        --restart unless-stopped \
+                        -p 3000:3000 \
+                        ${IMAGE_NAME}
+                """
+            }
+        }
 
-                    # Pull latest image
-                    docker pull ${registry}/${imageName}:latest
-
-                    # Stop and remove old containers
-                    docker-compose down
-
-                    # Start new containers
-                    docker-compose up -d
-
-                    # Wait for health check
-                    echo 'Waiting for containers to be healthy...'
-                    sleep 15
-
-                    # Show status
-                    docker-compose ps
-                    docker-compose logs --tail=20 nextjs-app
-
-                    echo 'Deployment completed!'
-                    echo 'Access at: http://localhost'
+        stage('Verify') {
+            steps {
+                sh """
+                    sleep 5
+                    docker ps | grep ${CONTAINER_NAME}
+                    curl -f http://localhost:3000 || exit 1
                 """
             }
         }
     }
 
     post {
-        always {
-            echo '=== Pipeline Completed ==='
-            sh 'docker images | grep nextjs-app || true'
-        }
         success {
-            echo """
-            ╔════════════════════════════════════════╗
-            ║   ✅ Deployment Successful!           ║
-            ╠════════════════════════════════════════╣
-            ║  Image: ${registry}/${imageName}:${GIT_COMMIT_SHORT}
-            ║  Access: http://localhost             ║
-            ╚════════════════════════════════════════╝
-            """
+            echo "✅ App is running at http://localhost:3000"
         }
         failure {
-            echo '❌ Deployment Failed! Check logs above.'
+            echo "❌ Deployment failed!"
         }
     }
 }
