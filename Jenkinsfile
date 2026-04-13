@@ -24,8 +24,8 @@ pipeline {
                     // Check docker-compose, cài nếu chưa có
                     sh """
                         if ! command -v docker-compose &> /dev/null; then
-                            echo 'docker-compose not found, installing...'
-                            curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-\$(uname -s)-\$(uname -m)" -o /usr/local/bin/docker-compose
+                            echo 'docker-compose not found, installing v2.24.6 (stable)...'
+                            curl -L "https://github.com/docker/compose/releases/download/v2.24.6/docker-compose-\$(uname -s)-\$(uname -m)" -o /usr/local/bin/docker-compose
                             chmod +x /usr/local/bin/docker-compose
                         fi
                         docker-compose --version
