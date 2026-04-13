@@ -40,7 +40,11 @@ pipeline {
                     echo "🚀 Building & Deploying with Traefik integration..."
 
                     sh """
-                        docker-compose -f ${COMPOSE_FILE} down 2>/dev/null || true
+                        # Force stop & remove container cũ bất kể có do docker-compose tạo hay không
+                        docker stop nextjs-app 2>/dev/null || true
+                        docker rm -f nextjs-app 2>/dev/null || true
+
+                        # Deploy với docker-compose
                         docker-compose -f ${COMPOSE_FILE} up -d --build ${SERVICE_NAME}
                         docker image prune -f
                     """
