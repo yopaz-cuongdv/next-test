@@ -76,11 +76,14 @@ pipeline {
 
     post {
         success {
-            echo """
-            ✅ DEPLOYMENT SUCCESSFUL!
-            🌐 App: http://192.168.68.228:3004
-            🔗 Traefik: integrated with web_network
-            """
+           script {
+            def myDomain = "next.yopaz-demo.dev"
+            def traefikPort = "8081"
+            
+            echo "✅ DEPLOYMENT SUCCESSFUL!"
+            echo "🔵 App URL: http://${myDomain}:${traefikPort}"
+            echo "🔗 Traefik Dashboard: http://192.168.68.228:8089/dashboard/"
+        }
         }
         failure {
             echo "❌ DEPLOYMENT FAILED! Check docker-compose logs."
