@@ -2,9 +2,10 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "nextjs-app"
-        CONTAINER_NAME = "nextjs-app"
-        COMPOSE_FILE = "docker-compose.yml"
+        IMAGE_NAME = "nextjs-prod-app"
+        CONTAINER_NAME = "nextjs-app" 
+        HOST_PORT = "3000"
+        CONTAINER_PORT = "3000"
     }
 
     stages {
@@ -14,38 +15,64 @@ pipeline {
             }
         }
 
-        stage('Build & Deploy') {
+        stage('Build Image') {
+            when {
+                branch 'main' // Chỉ build khi code được push vào nhánh main
+            }
             steps {
-                sh """
-                    # Stop & remove old container
-                    docker-compose -f ${COMPOSE_FILE} down 2>/dev/null || true
+                script {
+                    echo "🚀 Building Production Image for Main branch..."
+                    sh "docker build --build-arg NODE_ENV=production -t ${IMAGE_NAME}:latest ."
+                }
+            }
+        }
 
-                    # Build & start new container
-                    docker-compose -f ${COMPOSE_FILE} up -d --build app
+        stage('Deploy') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    echo "🚢 Deploying Container..."
+                    sh "docker stop ${CONTAINER_NAME} || true"
+                    sh "docker rm ${CONTAINER_NAME} || true"
 
-                    # Cleanup old images
-                    docker image prune -f
-                """
+                    sh """
+                        docker run -d \
+                        --name ${CONTAINER_NAME} \
+                        --restart unless-stopped \
+                        -p ${HOST_PORT}:${CONTAINER_PORT} \
+                        -e NODE_ENV=production \
+                        ${IMAGE_NAME}:latest
+                    """
+                }
             }
         }
 
         stage('Verify') {
             steps {
-                sh """
-                    sleep 5
-                    docker ps | grep ${CONTAINER_NAME}
-                    curl -f http://localhost:3000 || echo 'App starting...'
-                """
+                script {
+                    echo "🔍 Verifying deployment..."
+                    sleep 10 
+                    sh "docker ps | grep ${CONTAINER_NAME}"
+                }
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                echo "🧹 Cleaning up old images..."
+                sh "docker image prune -f"
             }
         }
     }
 
     post {
         success {
-            echo "✅ Deployed at http://localhost:3000"
+            echo "✅ DEPLOYMENT SUCCESSFUL ON BRANCH ${env.BRANCH_NAME}!"
         }
         failure {
-            echo "❌ Deployment failed!"
+            echo "❌ DEPLOYMENT FAILED!"
         }
     }
 }
