@@ -18,10 +18,9 @@ pipeline {
                 script {
                     echo "🚀 Building & Deploying with Traefik integration..."
 
-                    // Dùng docker-compose để deploy (tự động gắn Traefik labels)
                     sh """
-                        docker-compose -f ${COMPOSE_FILE} down 2>/dev/null || true
-                        docker-compose -f ${COMPOSE_FILE} up -d --build ${SERVICE_NAME}
+                        docker compose -f ${COMPOSE_FILE} down 2>/dev/null || true
+                        docker compose -f ${COMPOSE_FILE} up -d --build ${SERVICE_NAME}
                         docker image prune -f
                     """
                 }
@@ -33,18 +32,15 @@ pipeline {
                 script {
                     echo "🔍 Verifying deployment & Traefik routes..."
 
-                    // Check container running
                     sh """
                         sleep 5
                         docker ps | grep nextjs-app || echo 'Container check failed'
                     """
 
-                    // Check Traefik network
                     sh """
                         docker network inspect web_network | grep nextjs-app || echo 'Not in web_network'
                     """
 
-                    // Test access via Traefik (IP: 192.168.68.228)
                     sh """
                         curl -f http://192.168.68.228:3004 || echo 'Traefik route may need time'
                     """

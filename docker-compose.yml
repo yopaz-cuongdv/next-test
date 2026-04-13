@@ -22,7 +22,7 @@ services:
       - traefik.docker.network=web_network
 
       - traefik.http.routers.nextapp.entrypoints=http
-      - traefik.http.routers.nextapp.rule=Host(`192.168.68.228`)
+      - traefik.http.routers.nextapp.rule=Host(`next.yopaz-demo.dev`)
       - traefik.http.routers.nextapp.service=nextapp
       - traefik.http.services.nextapp.loadbalancer.server.port=3000
 
