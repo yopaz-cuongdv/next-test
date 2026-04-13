@@ -1,11 +1,35 @@
 version: '3.8'
 
 services:
+  # Production mode
   app:
-    build: .
+    build:
+      context: .
+      args:
+        NODE_ENV: production
     container_name: nextjs-app
     restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
+
+  # Development mode (hot reload)
+  dev:
+    build:
+      context: .
+      args:
+        NODE_ENV: development
+    container_name: nextjs-dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      - WATCHPACK_POLLING=true
+    profiles:
+      - dev

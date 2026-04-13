@@ -13,7 +13,6 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Config
-REGISTRY="docker.io/yopaz-cuongdv"
 IMAGE_NAME="nextjs-app"
 DEPLOY_PATH="/var/www/AI/nextjs-base"
 

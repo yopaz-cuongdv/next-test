@@ -1,16 +1,21 @@
-# Dockerfile cho Next.js Production
+# Dockerfile đa dụng - supports cả Dev & Prod mode
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Cài đặt dependencies
-COPY package*.json ./
-RUN npm ci
+# Install dependencies (support pnpm nếu có)
+COPY package.json package-lock.json pnpm-lock.yaml* ./
+RUN npm install -g pnpm && \
+    (pnpm install || npm install)
 
-# Copy code và build
+# Copy source code
 COPY . .
-RUN npm run build
 
-# Chạy app
+# Chỉ build cho production (tùy theo ENV)
+ARG NODE_ENV=production
+RUN if [ "$NODE_ENV" = "production" ]; then npm run build; fi
+
 EXPOSE 3000
-CMD ["npm", "start"]
+
+# Dev mode: npm run dev | Prod mode: npm start
+CMD ["sh", "-c", "if [ \"$NODE_ENV\" = \"development\" ]; then npm run dev; else npm start; fi"]
