@@ -11,19 +11,15 @@ services:
       - "3004:3000"
     environment:
       - NODE_ENV=production
-
-    networks:
-      - web_network
-
     labels:
       - traefik.enable=true
       - traefik.docker.network=web_network
-
+      - traefik.http.routers.nextapp.rule=Host(`next-demo.test`)
       - traefik.http.routers.nextapp.entrypoints=web
-      - traefik.http.routers.nextapp.rule=Host(`next.yopaz-demo.dev`)
-      - traefik.http.routers.nextapp.service=nextapp
       - traefik.http.services.nextapp.loadbalancer.server.port=3000
-
+      - traefik.http.routers.nextapp.service=nextapp
+    networks:
+      - web_network
   # Development mode (hot reload)
   dev:
     build:
