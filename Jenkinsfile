@@ -23,7 +23,7 @@ pipeline {
                     docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
 
                     # Build & run
-                    docker-compose -f ${COMPOSE_FILE} up -d --build ${SERVICE_NAME}
+                    docker compose -f ${COMPOSE_FILE} up -d --build ${SERVICE_NAME}
 
                     # Cleanup image rác
                     docker image prune -f
