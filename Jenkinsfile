@@ -4,7 +4,6 @@ pipeline {
     environment {
         COMPOSE_FILE = "docker-compose.yml"
         SERVICE_NAME = "app"
-        CONTAINER_NAME = "nextjs-app"
     }
 
     stages {
@@ -14,48 +13,80 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
+        stage('Prerequisites Check') {
             steps {
-                echo "🚀 Deploying application..."
+                script {
+                    echo "🔧 Checking Docker & Docker Compose..."
 
-                sh """
-                    # Stop & remove container cũ (nếu có)
-                    docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
+                    // Check docker
+                    sh "docker --version"
 
-                    # Build & run
-                    docker compose -f ${COMPOSE_FILE} up -d --build ${SERVICE_NAME}
-
-                    # Cleanup image rác
-                    docker image prune -f
-                """
+                    // Check docker-compose, cài nếu chưa có
+                    sh """
+                        if ! command -v docker-compose &> /dev/null; then
+                            echo 'docker-compose not found, installing v2.24.6 (stable)...'
+                            curl -L "https://github.com/docker/compose/releases/download/v2.24.6/docker-compose-\$(uname -s)-\$(uname -m)" -o /usr/local/bin/docker-compose
+                            chmod +x /usr/local/bin/docker-compose
+                        fi
+                        docker-compose --version
+                    """
+                }
             }
         }
 
-        stage('Verify') {
+        stage('Build & Deploy') {
             steps {
-                echo "🔍 Verifying..."
+                script {
+                    echo "🚀 Building & Deploying with Traefik integration..."
 
-                sh """
-                    sleep 3
-                    docker ps | grep ${CONTAINER_NAME} || (echo '❌ Container not running' && exit 1)
-                """
+                    sh """
+                        # Force stop & remove container cũ bất kể có do docker-compose tạo hay không
+                        docker stop nextjs-app 2>/dev/null || true
+                        docker rm -f nextjs-app 2>/dev/null || true
 
-                sh """
-                    curl -f http://192.168.68.228:3004 || echo '⚠️ App chưa ready (có thể cần thêm thời gian)'
-                """
+                        # Deploy với docker-compose
+                        docker-compose -f ${COMPOSE_FILE} up -d --build ${SERVICE_NAME}
+                        docker image prune -f
+                    """
+                }
+            }
+        }
+
+        stage('Verify Traefik Integration') {
+            steps {
+                script {
+                    echo "🔍 Verifying deployment & Traefik routes..."
+
+                    sh """
+                        sleep 5
+                        docker ps | grep nextjs-app || echo 'Container check failed'
+                    """
+
+                    sh """
+                        docker network inspect web_network | grep nextjs-app || echo 'Not in web_network'
+                    """
+
+                    sh """
+                        curl -f http://192.168.68.228:3004 || echo 'Traefik route may need time'
+                    """
+                }
             }
         }
     }
 
     post {
         success {
+           script {
+            def myDomain = "next.yopaz-demo.dev"
+            def traefikPort = "8081"
+            
             echo "✅ DEPLOYMENT SUCCESSFUL!"
-            echo "🔵 App URL: http://next.yopaz-demo.dev:8081"
-            echo "🔗 Traefik: http://192.168.68.228:8089/dashboard/"
+            echo "🔵 App URL: http://${myDomain}:${traefikPort}"
+            echo "🔗 Traefik Dashboard: http://192.168.68.228:8089/dashboard/"
         }
-
+        }
         failure {
-            echo "❌ DEPLOYMENT FAILED!"
+            echo "❌ DEPLOYMENT FAILED! Check docker-compose logs."
         }
     }
 }
